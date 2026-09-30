@@ -59,7 +59,9 @@ Después pulsa Deploy en Dokploy, o configura Auto Deploy si lo deseas. El volum
 
 ## Docker Compose opcional
 
-`compose.yaml` se incluye para uso con Docker Compose y enlaza el puerto al localhost del host. Los pasos anteriores usan **Application + Dockerfile**, por lo que no utilizan ese archivo. Para utilizar Compose en Dokploy habría que configurar un servicio de tipo Docker Compose, sus dominios y evitar conflictos con el puerto de host 3000.
+`compose.yaml` también permite desplegar con un servicio de tipo **Docker Compose** en Dokploy. Configura **Compose Path** como `./compose.yaml`. En Environment define `APP_USER=xergno` y completa `APP_PASSWORD`. En Domains selecciona el servicio `dostov`, puerto interno `3000`, ruta `/` y HTTPS. Guarda y despliega.
+
+Compose expone el puerto 3000 únicamente en la red Docker, sin reservar un puerto del servidor. Dokploy enruta el dominio hacia ese puerto interno. No agregues un mapeo `3000:3000` en Ports ni en el archivo Compose. El volumen `dostov-data` ya está declarado y montado en `/app/data`.
 
 ## Referencias
 
