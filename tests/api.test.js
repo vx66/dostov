@@ -1,0 +1,51 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from 'node:net';
+test('API de producción: autenticación, validación y origen', async () => {
+  const probe = createServer();
+  await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = probe.address().port;
+  await new Promise(resolve => probe.close(resolve));
+  const dir = mkdtempSync(join(tmpdir(), 'dostov-api-'));
+  const child = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: dir, NODE_ENV: 'production', APP_USER: 'test', APP_PASSWORD: 'test-password' }, stdio: 'pipe' });
+  try {
+    await new Promise((resolve, reject) => { child.stdout.once('data', resolve); child.once('error', reject); child.once('exit', code => reject(new Error(`Server exited: ${code}`))); });
+    const base = `http://127.0.0.1:${port}`;
+    assert.equal((await fetch(base + '/health')).status, 200);
+    assert.equal((await fetch(base + '/api/tasks')).status, 401);
+    assert.equal((await fetch(base + '/', { redirect: 'manual' })).headers.get('location'), '/login');
+    assert.equal((await fetch(base + '/login')).status, 200);
+    const jsonHeaders = { 'Content-Type': 'application/json' };
+    assert.equal((await fetch(base + '/api/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'test', password: 'wrong' }) })).status, 401);
+    const login = await fetch(base + '/api/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'test', password: 'test-password' }) });
+    assert.equal(login.status, 200);
+    const sessionCookie = login.headers.get('set-cookie');
+    assert.match(sessionCookie, /HttpOnly/); assert.match(sessionCookie, /Secure/); assert.match(sessionCookie, /SameSite=Strict/);
+    const headers = { Cookie: sessionCookie.split(';')[0], ...jsonHeaders };
+    assert.equal((await fetch(base + '/', { headers })).status, 200);
+    const create = await fetch(base + '/api/tasks', { method: 'POST', headers, body: JSON.stringify({ title: 'API task' }) });
+    assert.equal(create.status, 201); const task = await create.json();
+    const finish = await fetch(base + '/api/tasks/' + task.id, { method: 'PUT', headers, body: JSON.stringify({ ...task, status: 'done' }) });
+    assert.ok((await finish.json()).completedAt);
+    assert.equal((await fetch(base + '/api/tasks', { method: 'POST', headers, body: 'null' })).status, 400);
+    assert.equal((await fetch(base + '/api/tasks', { method: 'POST', headers: { ...headers, Origin: 'https://untrusted.example' }, body: JSON.stringify({ title: 'Blocked' }) })).status, 403);
+    const list = await (await fetch(base + '/api/tasks', { headers })).json(); assert.equal(list.length, 1);
+    const taskUrl = base + '/api/tasks/' + task.id;
+    assert.equal((await fetch(taskUrl, { method: 'DELETE' })).status, 401);
+    assert.equal((await fetch(taskUrl, { method: 'DELETE', headers: { ...headers, Origin: 'https://untrusted.example' } })).status, 403);
+    assert.equal((await fetch(taskUrl, { method: 'DELETE', headers })).status, 200);
+    assert.equal((await (await fetch(base + '/api/tasks', { headers })).json()).length, 0);
+    assert.equal((await fetch(taskUrl, { method: 'DELETE', headers })).status, 404);
+    assert.equal((await fetch(base + '/api/logout', { method: 'POST', headers, body: '{}' })).status, 200);
+    assert.equal((await fetch(base + '/api/tasks', { headers })).status, 401);
+    for (let i = 0; i < 10; i++) assert.equal((await fetch(base + '/api/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'test', password: 'wrong' }) })).status, 401);
+    assert.equal((await fetch(base + '/api/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'test', password: 'test-password' }) })).status, 429);
+  } finally {
+    child.kill(); await new Promise(resolve => child.once('exit', resolve));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -1,0 +1,14 @@
+services:
+  dostov:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      APP_USER: ${APP_USER:?Define APP_USER}
+      APP_PASSWORD: ${APP_PASSWORD:?Define APP_PASSWORD}
+    volumes:
+      - dostov-data:/app/data
+volumes:
+  dostov-data:
